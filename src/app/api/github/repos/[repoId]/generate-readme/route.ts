@@ -26,6 +26,15 @@ export async function POST(req:Request,
 
     const { repoId } = await params;
 
+    if(!mongoose.Types.ObjectId.isValid(repoId)){
+        return Response.json({
+            success : false,
+            message: "Bad Request"
+        },{
+            status : 400
+        })
+    }
+
     const ip =
             req.headers.get("x-forwarded-for") ??
             req.headers.get("x-real-ip") ??
@@ -56,7 +65,7 @@ export async function POST(req:Request,
 
         await dbConnect();
         
-        const {file,extractedFile} = await req.json();
+        const {file, extractedFile} = await req.json();
 
         if(!file || !extractedFile){
             return Response.json({
@@ -67,7 +76,7 @@ export async function POST(req:Request,
             })
         }   
 
-        const repoid = new  mongoose.Schema.Types.ObjectId(repoId);
+        const repoid = new  mongoose.Types.ObjectId(repoId);
 
         if (!mongoose.Types.ObjectId.isValid(repoId)) {
             return new Response("Invalid repo id", { status: 400 });

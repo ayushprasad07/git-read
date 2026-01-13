@@ -32,7 +32,6 @@ export async function getInstallationAccessToken(installationId : number){
     const jwt = getJwt();
 
     const octokit = new Octokit({
-        authStrategy : 'jwt',
         auth : jwt
     });
 

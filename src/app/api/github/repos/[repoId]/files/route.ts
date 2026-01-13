@@ -5,6 +5,7 @@ import { Octokit } from "@octokit/rest";
 import { authOptions } from "@/app/api/auth/[...nextauth]/options";
 import { getServerSession } from "next-auth";
 import { repoRateLimiter } from "@/lib/reatLimit";
+import mongoose from "mongoose";
 
 export async function GET(req : Request,{params} : {params : Promise<{repoId : string}>}){
 
@@ -20,6 +21,15 @@ export async function GET(req : Request,{params} : {params : Promise<{repoId : s
     }
 
     const { repoId } = await params;
+
+    if(!mongoose.Types.ObjectId.isValid(repoId)){
+        return Response.json({
+            success : false,
+            message: "Bad Request"
+        },{
+            status : 400
+        })
+    }
 
     const ip =
         req.headers.get("x-forwarded-for") ??
@@ -51,7 +61,9 @@ export async function GET(req : Request,{params} : {params : Promise<{repoId : s
     try {
         await dbConnect();
 
-        const repo = await GithubRepo.findById(repoId).populate("installation");
+        const repoid = new mongoose.Types.ObjectId(repoId);
+
+        const repo = await GithubRepo.findById(repoid).populate("installation");
 
         if(!repo || !repo.installation){
             return Response.json({
@@ -105,7 +117,7 @@ export async function GET(req : Request,{params} : {params : Promise<{repoId : s
             }
         );
           
-        console.log(repoData);
+        // console.log(repoData);
 
         const {data : treeData} = await octokit.request(
             "GET /repos/{owner}/{repo}/git/trees/{tree_sha}",

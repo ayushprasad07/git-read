@@ -4,10 +4,11 @@ import { getInstallationAccessToken } from "@/lib/githubApp";
 import { repoRateLimiter } from "@/lib/reatLimit";
 import GithubRepo from "@/model/GithubRepo";
 import { Octokit } from "@octokit/rest";
+import mongoose from "mongoose";
 import { getServerSession } from "next-auth";
 
 const IMPORTANT_FILES = [
-  "readme.md",
+  "README.md",
   "package.json",
   "pyproject.toml",
   "requirements.txt",
@@ -35,6 +36,17 @@ export async function GET(req : Request,{params} : {params : Promise<{repoId : s
     }
 
     const { repoId } = await params;
+
+    if(!mongoose.Types.ObjectId.isValid(repoId)){
+        return Response.json({
+            success : false,
+            message: "Bad Request"
+        },{
+            status : 400
+        })
+    }
+
+    const repoid = new mongoose.Types.ObjectId(repoId);
 
     const ip =
         req.headers.get("x-forwarded-for") ??
@@ -67,7 +79,7 @@ export async function GET(req : Request,{params} : {params : Promise<{repoId : s
         await dbConnect();
 
 
-        const repo = await GithubRepo.findById(repoId).populate("installation");
+        const repo = await GithubRepo.findById(repoid).populate("installation");
 
         if(!repo || !repo.installation){
             return Response.json({
@@ -78,9 +90,9 @@ export async function GET(req : Request,{params} : {params : Promise<{repoId : s
             })
         }
 
-        const installlationId = repo?.installation?.installationId;
+        const installation = repo.installation?.installationId;
 
-        if(!installlationId){
+        if(!installation){
             return Response.json({
                 success : false,
                 message: "Repo not found"
@@ -89,7 +101,7 @@ export async function GET(req : Request,{params} : {params : Promise<{repoId : s
             })
         }
 
-        const token = getInstallationAccessToken(installlationId!);
+        const token = await getInstallationAccessToken(installation);
 
         if(!token){
             return Response.json({
@@ -123,20 +135,21 @@ export async function GET(req : Request,{params} : {params : Promise<{repoId : s
                     extractedFile[file] = decode;
                 }
             } catch (error) {
-                console.log("Error in getting file:", error);
-                return Response.json({
-                    success : false,
-                    message: "Fetching error"
-                },{
-                    status : 400
-                })
+                // console.log("Error in getting file:", error);
+                // return Response.json({
+                //     success : false,
+                //     message: "Fetching error"
+                // },{
+                //     status : 400
+                // })
+                continue;
             }
         }
 
         return Response.json({
             success : true,
             repoName : repo.fullName,
-            data : extractedFile
+            content : extractedFile
         },{
             status : 200
         })

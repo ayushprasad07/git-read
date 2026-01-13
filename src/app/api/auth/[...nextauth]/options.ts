@@ -1,5 +1,8 @@
 import type { NextAuthOptions } from "next-auth";
 import GithubProvider from "next-auth/providers/github";
+import { dbConnect } from "@/lib/dbConnect";
+import User from "@/model/User";
+import type { GitHubProfile } from "@/types/github";
 
 export const authOptions: NextAuthOptions = {
   providers: [
@@ -10,10 +13,31 @@ export const authOptions: NextAuthOptions = {
   ],
 
   session: {
-    strategy: "jwt", // ✅ VALID in v4
+    strategy: "jwt",
   },
 
   callbacks: {
+    async signIn({ user, profile }) {
+      if (!profile) return false;
+
+      const githubProfile = profile as GitHubProfile;
+
+      await dbConnect();
+
+      await User.findOneAndUpdate(
+        { githubUserId: githubProfile.id.toString() },
+        {
+          githubUserId: githubProfile.id.toString(),
+          githubUserName: githubProfile.login,
+          githubUserAvatar: githubProfile.avatar_url,
+          email: user.email,
+        },
+        { upsert: true }
+      );
+
+      return true;
+    },
+
     async jwt({ token, account }) {
       if (account?.access_token) {
         token.accessToken = account.access_token;
@@ -22,7 +46,7 @@ export const authOptions: NextAuthOptions = {
     },
 
     async session({ session, token }) {
-      session.accessToken = token.accessToken;
+      session.accessToken = token.accessToken as string;
       return session;
     },
   },
