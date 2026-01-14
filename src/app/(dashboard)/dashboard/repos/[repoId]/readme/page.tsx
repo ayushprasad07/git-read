@@ -1,0 +1,865 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import dynamic from "next/dynamic";
+import { useParams, useRouter } from "next/navigation";
+import axios from "axios";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import { 
+  ArrowLeft,
+  RefreshCw,
+  Copy,
+  Download,
+  Eye,
+  Edit,
+  Check,
+  FileText,
+  GitCommit,
+  Zap,
+  FileCode,
+  Info,
+  Lightbulb,
+  X,
+  Sparkles,
+  Code,
+  File,
+  Folder,
+  GitBranch,
+  Globe,
+  Lock,
+  Menu,
+  ChevronDown,
+  ChevronUp
+} from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Badge } from "@/components/ui/badge";
+import { Separator } from "@/components/ui/separator";
+import { Progress } from "@/components/ui/progress";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { motion, AnimatePresence } from "framer-motion";
+import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
+import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
+
+const MonacoEditor = dynamic(() => import("@monaco-editor/react"), {
+  ssr: false,
+});
+
+interface RepoInfo {
+  fullName?: string;
+  defaultBranch?: string;
+  private?: boolean;
+  autoSync?: boolean;
+}
+
+export default function ReadmePage() {
+  const params = useParams();
+  const repoId = params?.repoId as string;
+  const router = useRouter();
+
+  const [files, setFiles] = useState<any[]>([]);
+  const [content, setContent] = useState<Record<string, string>>({});
+  const [readme, setReadme] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [committing, setCommitting] = useState(false);
+  const [copySuccess, setCopySuccess] = useState(false);
+  const [activeTab, setActiveTab] = useState<'edit' | 'preview'>('edit');
+  const [repoInfo, setRepoInfo] = useState<RepoInfo | null>(null);
+  const [stats, setStats] = useState({
+    words: 0,
+    lines: 0,
+    characters: 0
+  });
+  const [fetchingData, setFetchingData] = useState(true);
+  const [showSidebar, setShowSidebar] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
+
+  // Check if mobile
+  useEffect(() => {
+    const checkMobile = () => {
+      setIsMobile(window.innerWidth < 768);
+    };
+    
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+    return () => window.removeEventListener('resize', checkMobile);
+  }, []);
+
+  // Calculate stats
+  useEffect(() => {
+    const words = readme.trim().split(/\s+/).filter(word => word.length > 0).length;
+    const lines = readme.split('\n').length;
+    const characters = readme.length;
+    
+    setStats({ words, lines, characters });
+  }, [readme]);
+
+  // Fetch repo structure + important files
+  useEffect(() => {
+    if (!repoId) return;
+
+    const fetchAll = async () => {
+      try {
+        setFetchingData(true);
+        const [filesRes, contentRes] = await Promise.all([
+          axios.get(`/api/github/repos/${repoId}/files`),
+          axios.get(`/api/github/repos/${repoId}/content`)
+        ]);
+
+        setFiles(filesRes.data.files || []);
+        setContent(contentRes.data.content || {});
+        
+        // Try to extract repo info from the first API response if available
+        if (filesRes.data.repository) {
+          setRepoInfo(filesRes.data.repository);
+        } else {
+          // Set default/fallback repo info
+          setRepoInfo({
+            fullName: "Loading...",
+            defaultBranch: "main",
+            private: false,
+            autoSync: false
+          });
+        }
+      } catch (err: any) {
+        console.error("Failed to fetch repo data", err);
+        // Set fallback data
+        setRepoInfo({
+          fullName: "user/repository",
+          defaultBranch: "main",
+          private: false,
+          autoSync: false
+        });
+        setFiles([]);
+        setContent({});
+      } finally {
+        setFetchingData(false);
+      }
+    };
+
+    fetchAll();
+  }, [repoId]);
+
+  async function generateReadme() {
+    if (!repoId) return;
+
+    setLoading(true);
+    try {
+      const res = await axios.post(
+        `/api/github/repos/${repoId}/generate-readme`,
+        {
+          file: files,
+          extractedFile: content,
+        }
+      );
+
+      setReadme(res.data.readme || "");
+      setActiveTab('preview');
+    } catch (err: any) {
+      console.error(err);
+      // Fallback README template
+      const fallbackReadme = `# ${repoInfo?.fullName?.split('/')[1] || 'Project'}
+
+## Description
+This README was auto-generated by GitRead-Bot.
+
+## Installation
+\`\`\`bash
+git clone ${repoInfo?.fullName || 'repository-url'}
+cd ${repoInfo?.fullName?.split('/')[1] || 'project'}
+npm install
+\`\`\`
+
+## Usage
+Start the development server:
+\`\`\`bash
+npm run dev
+\`\`\`
+
+## Features
+- Feature 1
+- Feature 2
+- Feature 3
+
+## Contributing
+Pull requests are welcome.`;
+
+      setReadme(fallbackReadme);
+      setActiveTab('preview');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function commitReadme() {
+    if (!readme.trim() || !repoId) return;
+
+    setCommitting(true);
+    try {
+      await axios.post(
+        `/api/github/repos/${repoId}/commit-readme`,
+        {
+          readmeContent: readme,
+          commitMessage: "docs: auto-generate README with GitRead-Bot",
+        }
+      );
+
+      // Show success notification (you can add toast here)
+    } catch (err: any) {
+      console.error(err);
+    } finally {
+      setCommitting(false);
+    }
+  }
+
+  function handleCopyToClipboard() {
+    navigator.clipboard.writeText(readme);
+    setCopySuccess(true);
+    setTimeout(() => setCopySuccess(false), 2000);
+  }
+
+  function handleDownload() {
+    const blob = new Blob([readme], { type: 'text/markdown' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'README.md';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
+  // Icon components
+  const Hash = ({ className = "" }: { className?: string }) => (
+    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+      <line x1="4" x2="20" y1="9" y2="9" />
+      <line x1="4" x2="20" y1="15" y2="15" />
+      <line x1="10" x2="8" y1="3" y2="21" />
+      <line x1="16" x2="14" y1="3" y2="21" />
+    </svg>
+  );
+
+  const List = ({ className = "" }: { className?: string }) => (
+    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+      <line x1="8" x2="21" y1="6" y2="6" />
+      <line x1="8" x2="21" y1="12" y2="12" />
+      <line x1="8" x2="21" y1="18" y2="18" />
+      <line x1="3" x2="3.01" y1="6" y2="6" />
+      <line x1="3" x2="3.01" y1="12" y2="12" />
+      <line x1="3" x2="3.01" y1="18" y2="18" />
+    </svg>
+  );
+
+  const LinkIcon = ({ className = "" }: { className?: string }) => (
+    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+      <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+      <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+    </svg>
+  );
+
+  const Bold = ({ className = "" }: { className?: string }) => (
+    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+      <path d="M6 4h8a4 4 0 0 1 4 4 4 4 0 0 1-4 4H6z" />
+      <path d="M6 12h9a4 4 0 0 1 4 4 4 4 0 0 1-4 4H6z" />
+    </svg>
+  );
+
+  const Table = ({ className = "" }: { className?: string }) => (
+    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+      <path d="M9 3H5a2 2 0 0 0-2 2v4m6-6h10a2 2 0 0 1 2 2v4M9 3v18m0 0h10a2 2 0 0 0 2-2V9M9 21H5a2 2 0 0 1-2-2V9m0 0h18" />
+    </svg>
+  );
+
+  return (
+    <div className="min-h-screen bg-gradient-to-b from-gray-50 to-gray-100 p-3 sm:p-4 md:p-6 w-full overflow-x-hidden">
+      <div className="mx-auto w-full">
+        {/* Mobile Sidebar Toggle */}
+        {isMobile && !fetchingData && (
+          <div className="mb-4 flex justify-center">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setShowSidebar(!showSidebar)}
+              className="gap-2 w-full"
+            >
+              {showSidebar ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+              {showSidebar ? 'Hide Repository Info' : 'Show Repository Info'}
+            </Button>
+          </div>
+        )}
+
+        {/* Mobile Sidebar */}
+        {isMobile && showSidebar && !fetchingData && (
+          <div className="mb-6">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Info className="h-5 w-5 text-blue-600" />
+                  Repository Info
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {repoInfo ? (
+                  <>
+                    <div>
+                      <p className="text-sm font-medium text-gray-500">Repository</p>
+                      <p className="font-semibold text-gray-900 truncate">{repoInfo.fullName || "Loading..."}</p>
+                    </div>
+                    
+                    <div>
+                      <p className="text-sm font-medium text-gray-500">Default Branch</p>
+                      <div className="flex items-center gap-2">
+                        <GitBranch className="h-4 w-4 text-gray-400" />
+                        <code className="text-sm font-mono bg-gray-100 px-2 py-1 rounded">
+                          {repoInfo.defaultBranch || "main"}
+                        </code>
+                      </div>
+                    </div>
+                    
+                    <div>
+                      <p className="text-sm font-medium text-gray-500">Visibility</p>
+                      <div className="flex items-center gap-2 mt-1">
+                        {repoInfo.private ? (
+                          <>
+                            <Lock className="h-4 w-4 text-red-500" />
+                            <Badge variant="destructive">Private</Badge>
+                          </>
+                        ) : (
+                          <>
+                            <Globe className="h-4 w-4 text-green-500" />
+                            <Badge variant="default">Public</Badge>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                    
+                    {repoInfo.autoSync && (
+                      <Alert className="bg-blue-50 border-blue-200">
+                        <RefreshCw className="h-4 w-4 text-blue-600" />
+                        <AlertDescription className="text-blue-700">
+                          Auto-sync enabled
+                        </AlertDescription>
+                      </Alert>
+                    )}
+                  </>
+                ) : null}
+              </CardContent>
+            </Card>
+          </div>
+        )}
+
+        {/* Header - Optimized for mobile */}
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 sm:gap-4 mb-4 sm:mb-6 lg:mb-8">
+          <div className="flex items-start gap-3">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => router.back()}
+              className="gap-2 flex-shrink-0"
+            >
+              <ArrowLeft className="h-4 w-4" />
+              <span className="hidden xs:inline">Back</span>
+            </Button>
+            
+            <div className="min-w-0 flex-1">
+              <h1 className="text-xl sm:text-2xl md:text-3xl lg:text-4xl font-bold text-gray-900 tracking-tight truncate">
+                README Editor
+              </h1>
+              <div className="text-gray-600 mt-1 text-xs sm:text-sm md:text-base">
+                {fetchingData ? (
+                  <div className="h-3 sm:h-4 w-32 sm:w-48 bg-gray-200 rounded animate-pulse" />
+                ) : repoInfo?.fullName ? (
+                  <div className="truncate">
+                    Editing README for <span className="font-semibold text-gray-900 truncate">{repoInfo.fullName}</span>
+                  </div>
+                ) : (
+                  "Generate and edit your project's README with AI assistance"
+                )}
+              </div>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap gap-2 sm:gap-3 mt-3 sm:mt-0">
+            {fetchingData ? (
+              <div className="h-9 sm:h-10 w-32 sm:w-40 bg-gray-200 rounded-lg animate-pulse" />
+            ) : loading ? (
+              <div className="flex items-center gap-2 px-3 sm:px-4 py-2 sm:py-2.5 bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-lg text-sm sm:text-base">
+                <RefreshCw className="h-3 sm:h-4 w-3 sm:w-4 animate-spin" />
+                <span>Generating...</span>
+              </div>
+            ) : (
+              <Button
+                onClick={generateReadme}
+                disabled={files.length === 0}
+                className="gap-2 bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-sm sm:text-base"
+                size={isMobile ? "sm" : "default"}
+              >
+                <Zap className="h-3 sm:h-4 w-3 sm:w-4" />
+                <span className="hidden xs:inline">Generate README</span>
+                <span className="xs:hidden">Generate</span>
+              </Button>
+            )}
+          </div>
+        </div>
+
+        {/* Stats Overview - Stacked on mobile */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4 mb-4 sm:mb-6 lg:mb-8">
+          {fetchingData ? (
+            <>
+              <div className="h-28 sm:h-32 bg-white rounded-xl border border-gray-200 p-4 sm:p-6">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="h-3 sm:h-4 w-12 sm:w-16 bg-gray-200 rounded animate-pulse mb-2" />
+                    <div className="h-6 sm:h-8 w-8 sm:w-12 bg-gray-300 rounded animate-pulse mt-2" />
+                  </div>
+                  <div className="h-8 sm:h-12 w-8 sm:w-12 bg-gray-200 rounded-lg animate-pulse" />
+                </div>
+              </div>
+              <div className="h-28 sm:h-32 bg-white rounded-xl border border-gray-200 p-4 sm:p-6">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="h-3 sm:h-4 w-12 sm:w-16 bg-gray-200 rounded animate-pulse mb-2" />
+                    <div className="h-6 sm:h-8 w-8 sm:w-12 bg-gray-300 rounded animate-pulse mt-2" />
+                  </div>
+                  <div className="h-8 sm:h-12 w-8 sm:w-12 bg-gray-200 rounded-lg animate-pulse" />
+                </div>
+              </div>
+              <div className="h-28 sm:h-32 bg-white rounded-xl border border-gray-200 p-4 sm:p-6">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="h-3 sm:h-4 w-16 sm:w-20 bg-gray-200 rounded animate-pulse mb-2" />
+                    <div className="h-6 sm:h-8 w-8 sm:w-12 bg-gray-300 rounded animate-pulse mt-2" />
+                  </div>
+                  <div className="h-8 sm:h-12 w-8 sm:w-12 bg-gray-200 rounded-lg animate-pulse" />
+                </div>
+              </div>
+            </>
+          ) : (
+            <>
+              <Card className="h-28 sm:h-32">
+                <CardContent className="pt-4 sm:pt-6">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-xs sm:text-sm font-medium text-gray-500">Words</p>
+                      <p className="text-xl sm:text-2xl md:text-3xl font-bold text-gray-900 mt-1 sm:mt-2">{stats.words}</p>
+                    </div>
+                    <div className="p-2 sm:p-3 bg-blue-50 rounded-lg">
+                      <FileText className="h-4 sm:h-6 w-4 sm:w-6 text-blue-600" />
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card className="h-28 sm:h-32">
+                <CardContent className="pt-4 sm:pt-6">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-xs sm:text-sm font-medium text-gray-500">Lines</p>
+                      <p className="text-xl sm:text-2xl md:text-3xl font-bold text-gray-900 mt-1 sm:mt-2">{stats.lines}</p>
+                    </div>
+                    <div className="p-2 sm:p-3 bg-green-50 rounded-lg">
+                      <FileCode className="h-4 sm:h-6 w-4 sm:w-6 text-green-600" />
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card className="h-28 sm:h-32">
+                <CardContent className="pt-4 sm:pt-6">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-xs sm:text-sm font-medium text-gray-500">Characters</p>
+                      <p className="text-xl sm:text-2xl md:text-3xl font-bold text-gray-900 mt-1 sm:mt-2">{stats.characters}</p>
+                    </div>
+                    <div className="p-2 sm:p-3 bg-purple-50 rounded-lg">
+                      <Code className="h-4 sm:h-6 w-4 sm:w-6 text-purple-600" />
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            </>
+          )}
+        </div>
+
+        {/* Main Editor Area - Stacked on mobile */}
+        <div className="grid grid-cols-1 lg:grid-cols-4 gap-4 sm:gap-6">
+          {/* Editor Panel - Full width on mobile */}
+          <div className="lg:col-span-3">
+            <Card className="h-[70vh] sm:h-[75vh] md:h-[80vh] flex flex-col">
+              <CardHeader className="pb-2 sm:pb-3 border-b px-3 sm:px-6">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2 sm:gap-4 overflow-x-auto">
+                    {fetchingData ? (
+                      <div className="h-8 sm:h-10 w-32 sm:w-48 bg-gray-200 rounded-lg animate-pulse" />
+                    ) : (
+                      <Tabs 
+                        value={activeTab} 
+                        onValueChange={(v) => setActiveTab(v as 'edit' | 'preview')}
+                        className="w-auto"
+                      >
+                        <TabsList className="h-8 sm:h-10">
+                          <TabsTrigger value="edit" className="gap-1 sm:gap-2 px-2 sm:px-3 text-xs sm:text-sm">
+                            <Edit className="h-3 sm:h-4 w-3 sm:w-4" />
+                            <span className="hidden xs:inline">Edit</span>
+                          </TabsTrigger>
+                          <TabsTrigger value="preview" className="gap-1 sm:gap-2 px-2 sm:px-3 text-xs sm:text-sm">
+                            <Eye className="h-3 sm:h-4 w-3 sm:w-4" />
+                            <span className="hidden xs:inline">Preview</span>
+                          </TabsTrigger>
+                        </TabsList>
+                      </Tabs>
+                    )}
+                    
+                    {!fetchingData && (
+                      <Badge variant="secondary" className="gap-1 text-xs whitespace-nowrap">
+                        <File className="h-2.5 sm:h-3 w-2.5 sm:w-3" />
+                        Markdown
+                      </Badge>
+                    )}
+                  </div>
+                  
+                  {fetchingData ? (
+                    <div className="h-7 sm:h-9 w-24 sm:w-32 bg-gray-200 rounded-lg animate-pulse" />
+                  ) : (
+                    <div className="flex items-center gap-1 sm:gap-2">
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={handleCopyToClipboard}
+                              className="gap-1 sm:gap-2 h-7 sm:h-9 px-2 sm:px-3"
+                            >
+                              {copySuccess ? (
+                                <>
+                                  <Check className="h-3 sm:h-4 w-3 sm:w-4 text-green-600" />
+                                  <span className="text-green-600 text-xs sm:text-sm">Copied</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Copy className="h-3 sm:h-4 w-3 sm:w-4" />
+                                  <span className="hidden sm:inline text-xs sm:text-sm">Copy</span>
+                                </>
+                              )}
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            Copy to clipboard
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                      
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={handleDownload}
+                              className="gap-1 sm:gap-2 h-7 sm:h-9 px-2 sm:px-3"
+                            >
+                              <Download className="h-3 sm:h-4 w-3 sm:w-4" />
+                              <span className="hidden sm:inline text-xs sm:text-sm">Download</span>
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            Download as .md file
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                    </div>
+                  )}
+                </div>
+              </CardHeader>
+
+              <CardContent className="flex-1 overflow-hidden p-0">
+                {fetchingData ? (
+                  <div className="h-full flex items-center justify-center">
+                    <div className="text-center px-4">
+                      <RefreshCw className="h-8 sm:h-12 w-8 sm:w-12 text-gray-400 animate-spin mx-auto mb-3 sm:mb-4" />
+                      <p className="text-gray-500 text-sm sm:text-base">Loading repository data...</p>
+                      <p className="text-xs sm:text-sm text-gray-400 mt-1 sm:mt-2">Fetching files and analyzing codebase</p>
+                    </div>
+                  </div>
+                ) : (
+                  <AnimatePresence mode="wait">
+                    {activeTab === 'edit' ? (
+                      <motion.div
+                        key="editor"
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        className="h-full"
+                      >
+                        <MonacoEditor
+                          height="100%"
+                          language="markdown"
+                          value={readme}
+                          onChange={(v) => setReadme(v || "")}
+                          theme="vs"
+                          options={{
+                            minimap: { enabled: !isMobile },
+                            fontSize: isMobile ? 12 : 14,
+                            wordWrap: 'on',
+                            scrollBeyondLastLine: false,
+                            padding: { top: isMobile ? 10 : 20 },
+                            automaticLayout: true,
+                            lineNumbers: isMobile ? 'off' : 'on',
+                            folding: !isMobile,
+                            suggestOnTriggerCharacters: !isMobile,
+                          }}
+                        />
+                      </motion.div>
+                    ) : (
+                      <motion.div
+                        key="preview"
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        className="h-full overflow-auto p-3 sm:p-6"
+                      >
+                        {readme ? (
+                          <ReactMarkdown
+                            remarkPlugins={[remarkGfm]}
+                            components={{
+                              code({inline, className, children, ...props}: any) {
+                                const match = /language-(\w+)/.exec(className || '');
+                                return !inline && match ? (
+                                  <SyntaxHighlighter
+                                    style={vscDarkPlus}
+                                    language={match[1]}
+                                    PreTag="div"
+                                    {...props}
+                                    className="rounded-lg my-3 sm:my-4 text-xs sm:text-sm"
+                                  >
+                                    {String(children).replace(/\n$/, '')}
+                                  </SyntaxHighlighter>
+                                ) : (
+                                  <code className="bg-gray-100 text-gray-800 px-1 py-0.5 rounded text-xs sm:text-sm" {...props}>
+                                    {children}
+                                  </code>
+                                );
+                              },
+                              h1: ({node, ...props}) => <h1 className="text-xl sm:text-2xl md:text-3xl font-bold text-gray-900 mt-4 sm:mt-6 mb-3 sm:mb-4 pb-2 border-b" {...props} />,
+                              h2: ({node, ...props}) => <h2 className="text-lg sm:text-xl md:text-2xl font-bold text-gray-800 mt-3 sm:mt-5 mb-2 sm:mb-3" {...props} />,
+                              h3: ({node, ...props}) => <h3 className="text-base sm:text-lg md:text-xl font-semibold text-gray-700 mt-3 sm:mt-4 mb-1.5 sm:mb-2" {...props} />,
+                              p: ({node, ...props}) => <p className="text-gray-600 leading-relaxed text-sm sm:text-base mb-3 sm:mb-4" {...props} />,
+                              ul: ({node, ...props}) => <ul className="list-disc pl-4 sm:pl-6 mb-3 sm:mb-4 text-gray-600 text-sm sm:text-base" {...props} />,
+                              ol: ({node, ...props}) => <ol className="list-decimal pl-4 sm:pl-6 mb-3 sm:mb-4 text-gray-600 text-sm sm:text-base" {...props} />,
+                              li: ({node, ...props}) => <li className="mb-1 sm:mb-2" {...props} />,
+                              blockquote: ({node, ...props}) => <blockquote className="border-l-4 border-gray-300 pl-3 sm:pl-4 italic text-gray-500 my-3 sm:my-4 text-sm sm:text-base" {...props} />,
+                              a: ({node, ...props}) => <a className="text-blue-600 hover:text-blue-800 underline text-sm sm:text-base" target="_blank" rel="noopener noreferrer" {...props} />,
+                              table: ({node, ...props}) => <table className="w-full border-collapse border border-gray-300 my-3 sm:my-4 text-xs sm:text-sm" {...props} />,
+                              th: ({node, ...props}) => <th className="border border-gray-300 px-2 sm:px-4 py-1 sm:py-2 bg-gray-50 font-semibold" {...props} />,
+                              td: ({node, ...props}) => <td className="border border-gray-300 px-2 sm:px-4 py-1 sm:py-2" {...props} />,
+                            }}
+                          >
+                            {readme}
+                          </ReactMarkdown>
+                        ) : (
+                          <div className="text-center py-8 sm:py-12">
+                            <FileText className="h-8 sm:h-12 w-8 sm:w-12 text-gray-300 mx-auto mb-3 sm:mb-4" />
+                            <h3 className="text-base sm:text-lg font-semibold text-gray-900 mb-1.5 sm:mb-2">No content to preview</h3>
+                            <p className="text-gray-500 text-sm sm:text-base">Start editing or generate a README to see the preview here.</p>
+                          </div>
+                        )}
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                )}
+              </CardContent>
+
+              <CardFooter className="border-t pt-3 sm:pt-4 px-3 sm:px-6">
+                {fetchingData ? (
+                  <div className="w-full flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div className="flex items-center gap-2 sm:gap-4">
+                      <div className="h-3 sm:h-4 w-20 sm:w-32 bg-gray-200 rounded animate-pulse" />
+                      <div className="h-3 sm:h-4 w-px bg-gray-300" />
+                      <div className="h-3 sm:h-4 w-16 sm:w-24 bg-gray-200 rounded animate-pulse" />
+                    </div>
+                    <div className="flex gap-2 sm:gap-3">
+                      <div className="h-7 sm:h-9 w-12 sm:w-20 bg-gray-200 rounded-lg animate-pulse" />
+                      <div className="h-7 sm:h-9 w-20 sm:w-28 bg-gray-200 rounded-lg animate-pulse" />
+                      <div className="h-7 sm:h-9 w-24 sm:w-32 bg-gray-200 rounded-lg animate-pulse" />
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between w-full gap-3 sm:gap-4">
+                    <div className="text-xs sm:text-sm text-gray-500">
+                      <div className="flex items-center gap-2 sm:gap-4 flex-wrap">
+                        <span className="flex items-center gap-1">
+                          <Folder className="h-3 sm:h-4 w-3 sm:w-4" />
+                          <span className="whitespace-nowrap">{files.length} files</span>
+                        </span>
+                        <Separator orientation="vertical" className="h-3 sm:h-4 hidden sm:block" />
+                        <span className="flex items-center gap-1">
+                          <FileCode className="h-3 sm:h-4 w-3 sm:w-4" />
+                          <span className="whitespace-nowrap">{Object.keys(content).length} loaded</span>
+                        </span>
+                      </div>
+                    </div>
+                    
+                    <div className="flex flex-wrap gap-2 sm:gap-3">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setReadme('')}
+                        disabled={!readme.trim() || loading}
+                        className="gap-1 sm:gap-2 h-7 sm:h-9 px-2 sm:px-3"
+                      >
+                        <X className="h-3 sm:h-4 w-3 sm:w-4" />
+                        <span className="text-xs sm:text-sm">Clear</span>
+                      </Button>
+                      
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={generateReadme}
+                        disabled={loading || files.length === 0}
+                        className="gap-1 sm:gap-2 h-7 sm:h-9 px-2 sm:px-3"
+                      >
+                        <RefreshCw className={`h-3 sm:h-4 w-3 sm:w-4 ${loading ? 'animate-spin' : ''}`} />
+                        <span className="text-xs sm:text-sm">{loading ? 'Regenerating...' : 'Regenerate'}</span>
+                      </Button>
+                      
+                      <Button
+                        size="sm"
+                        onClick={commitReadme}
+                        disabled={committing || !readme.trim() || loading}
+                        className="gap-1 sm:gap-2 h-7 sm:h-9 px-2 sm:px-3 bg-gradient-to-r from-green-600 to-green-700 hover:from-green-700 hover:to-green-800"
+                      >
+                        <GitCommit className={`h-3 sm:h-4 w-3 sm:w-4 ${committing ? 'animate-spin' : ''}`} />
+                        <span className="text-xs sm:text-sm whitespace-nowrap">{committing ? 'Committing...' : 'Commit'}</span>
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </CardFooter>
+            </Card>
+          </div>
+
+          {/* Sidebar Panels - Hidden on mobile, shown on desktop */}
+          {!isMobile && (
+            <div className="space-y-4 sm:space-y-6">
+              {/* Repository Info */}
+              <Card>
+                <CardHeader className="px-4 sm:px-6 py-3 sm:py-4">
+                  <CardTitle className="flex items-center gap-2 text-sm sm:text-base">
+                    <Info className="h-4 sm:h-5 w-4 sm:w-5 text-blue-600" />
+                    Repository Info
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="px-4 sm:px-6 py-3 space-y-3 sm:space-y-4">
+                  {fetchingData ? (
+                    <div className="space-y-2 sm:space-y-3">
+                      <div className="h-3 sm:h-4 w-full bg-gray-200 rounded animate-pulse" />
+                      <div className="h-3 sm:h-4 w-3/4 bg-gray-200 rounded animate-pulse" />
+                      <div className="h-3 sm:h-4 w-1/2 bg-gray-200 rounded animate-pulse" />
+                    </div>
+                  ) : repoInfo ? (
+                    <>
+                      <div>
+                        <p className="text-xs sm:text-sm font-medium text-gray-500">Repository</p>
+                        <p className="font-semibold text-gray-900 truncate text-sm sm:text-base">{repoInfo.fullName || "Loading..."}</p>
+                      </div>
+                      
+                      <div>
+                        <p className="text-xs sm:text-sm font-medium text-gray-500">Default Branch</p>
+                        <div className="flex items-center gap-2">
+                          <GitBranch className="h-3 sm:h-4 w-3 sm:w-4 text-gray-400" />
+                          <code className="text-xs sm:text-sm font-mono bg-gray-100 px-1.5 sm:px-2 py-0.5 sm:py-1 rounded">
+                            {repoInfo.defaultBranch || "main"}
+                          </code>
+                        </div>
+                      </div>
+                      
+                      <div>
+                        <p className="text-xs sm:text-sm font-medium text-gray-500">Visibility</p>
+                        <div className="flex items-center gap-2 mt-1">
+                          {repoInfo.private ? (
+                            <>
+                              <Lock className="h-3 sm:h-4 w-3 sm:w-4 text-red-500" />
+                              <Badge variant="destructive" className="text-xs">Private</Badge>
+                            </>
+                          ) : (
+                            <>
+                              <Globe className="h-3 sm:h-4 w-3 sm:w-4 text-green-500" />
+                              <Badge variant="default" className="text-xs">Public</Badge>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                      
+                      {repoInfo.autoSync && (
+                        <Alert className="bg-blue-50 border-blue-200 py-2">
+                          <RefreshCw className="h-3 sm:h-4 w-3 sm:w-4 text-blue-600" />
+                          <AlertDescription className="text-blue-700 text-xs sm:text-sm">
+                            Auto-sync enabled
+                          </AlertDescription>
+                        </Alert>
+                      )}
+                    </>
+                  ) : (
+                    <div className="space-y-2 sm:space-y-3">
+                      <div className="h-3 sm:h-4 w-full bg-gray-200 rounded animate-pulse" />
+                      <div className="h-3 sm:h-4 w-3/4 bg-gray-200 rounded animate-pulse" />
+                      <div className="h-3 sm:h-4 w-1/2 bg-gray-200 rounded animate-pulse" />
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+
+              {/* Generation Progress */}
+              {loading && (
+                <Card>
+                  <CardHeader className="px-4 sm:px-6 py-3 sm:py-4">
+                    <CardTitle className="flex items-center gap-2 text-sm sm:text-base">
+                      <Sparkles className="h-4 sm:h-5 w-4 sm:w-5 text-purple-600" />
+                      Generating README
+                    </CardTitle>
+                    <CardDescription className="text-xs sm:text-sm">
+                      AI is analyzing your codebase
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="px-4 sm:px-6 py-3">
+                    <Progress value={33} className="h-1.5 sm:h-2" />
+                    <p className="text-xs sm:text-sm text-gray-500 mt-1.5 sm:mt-2 text-center">
+                      Processing {files.length} files...
+                    </p>
+                  </CardContent>
+                </Card>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Mobile-only generation progress */}
+        {isMobile && loading && (
+          <Card className="mt-4 sm:mt-6">
+            <CardHeader className="px-4 py-3">
+              <CardTitle className="flex items-center gap-2 text-sm">
+                <Sparkles className="h-4 w-4 text-purple-600" />
+                Generating README
+              </CardTitle>
+              <CardDescription className="text-xs">
+                AI is analyzing your codebase
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="px-4 py-3">
+              <Progress value={33} className="h-1.5" />
+              <p className="text-xs text-gray-500 mt-1.5 text-center">
+                Processing {files.length} files...
+              </p>
+            </CardContent>
+          </Card>
+        )}
+      </div>
+    </div>
+  );
+}

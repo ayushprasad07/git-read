@@ -142,6 +142,8 @@ export async function GET(req : Request,{params} : {params : Promise<{repoId : s
                 path: item.path,
                 type: item.type,
             })),
+        },{
+            status : 200
         });
 
     } catch (error) {
