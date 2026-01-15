@@ -89,17 +89,31 @@
 
 import crypto from "crypto";
 import { headers } from "next/headers";
+
+import { dbConnect } from "@/lib/dbConnect";
+
 import User from "@/model/User";
 import GithubInstallation from "@/model/GithubInstallation";
 import GithubRepo from "@/model/GithubRepo";
-import { dbConnect } from "@/lib/dbConnect";
+import ReadmeJob, {
+  READ_ME_JOB_STATUS,
+} from "@/model/ReadmeJob";
 
+/**
+ * GitHub App Webhook Handler
+ * Handles:
+ * - installation.created
+ * - installation_repositories.added
+ * - installation_repositories.removed
+ * - push (auto-sync README)
+ */
 export async function POST(req: Request) {
   /* --------------------------------------------------
-     1️⃣ Read raw body & verify signature
+     1️⃣ Verify webhook signature
   -------------------------------------------------- */
   const body = await req.text();
   const signature = (await headers()).get("x-hub-signature-256");
+  const event = (await headers()).get("x-github-event");
 
   const expectedSignature =
     "sha256=" +
@@ -121,12 +135,11 @@ export async function POST(req: Request) {
 
     /* ==================================================
        3️⃣ INSTALLATION CREATED
-       Triggered when app is installed
     ================================================== */
-    if (payload.action === "created" && payload.installation) {
+    if (event === "installation" && payload.action === "created") {
       const installation = payload.installation;
 
-      // 🔑 FIND USER USING GITHUB USER ID (CORRECT WAY)
+      // 🔑 Match user via GitHub USER ID (NOT username)
       const user = await User.findOne({
         githubUserId: installation.account.id.toString(),
       });
@@ -139,7 +152,6 @@ export async function POST(req: Request) {
         return new Response("User not found", { status: 404 });
       }
 
-      // Save / update installation
       const savedInstallation =
         await GithubInstallation.findOneAndUpdate(
           { installationId: installation.id.toString() },
@@ -152,7 +164,7 @@ export async function POST(req: Request) {
           { upsert: true, new: true }
         );
 
-      // Save repositories selected during install
+      // Save selected repositories
       if (payload.repositories?.length) {
         for (const repo of payload.repositories) {
           await GithubRepo.findOneAndUpdate(
@@ -164,6 +176,7 @@ export async function POST(req: Request) {
               private: repo.private,
               defaultBranch: "main",
               installation: savedInstallation._id,
+              autoSync: false, // user enables later
             },
             { upsert: true }
           );
@@ -175,12 +188,10 @@ export async function POST(req: Request) {
 
     /* ==================================================
        4️⃣ REPOSITORIES ADDED
-       Triggered when user adds repos later
     ================================================== */
     if (
-      payload.action === "added" &&
-      payload.installation &&
-      payload.repositories_added
+      event === "installation_repositories" &&
+      payload.action === "added"
     ) {
       const installation = await GithubInstallation.findOne({
         installationId: payload.installation.id.toString(),
@@ -202,6 +213,7 @@ export async function POST(req: Request) {
             private: repo.private,
             defaultBranch: "main",
             installation: installation._id,
+            autoSync: false,
           },
           { upsert: true }
         );
@@ -212,12 +224,10 @@ export async function POST(req: Request) {
 
     /* ==================================================
        5️⃣ REPOSITORIES REMOVED
-       Triggered when user removes repos
     ================================================== */
     if (
-      payload.action === "removed" &&
-      payload.installation &&
-      payload.repositories_removed
+      event === "installation_repositories" &&
+      payload.action === "removed"
     ) {
       for (const repo of payload.repositories_removed) {
         await GithubRepo.deleteOne({
@@ -228,8 +238,55 @@ export async function POST(req: Request) {
       return new Response("Repositories removed", { status: 200 });
     }
 
+    /* ==================================================
+       6️⃣ PUSH EVENT → QUEUE README JOB
+    ================================================== */
+    if (event === "push" && payload.repository) {
+      const fullName = payload.repository.full_name;
+
+      const repo = await GithubRepo.findOne({
+        fullName,
+        autoSync: true,
+      });
+
+      if (!repo) {
+        return new Response("Auto-sync disabled", {
+          status: 200,
+        });
+      }
+
+      const installation = await GithubInstallation.findById(
+        repo.installation
+      );
+
+      if (!installation) {
+        return new Response("Installation not found", {
+          status: 404,
+        });
+      }
+
+      // 🚦 Prevent duplicate pending jobs
+      await ReadmeJob.findOneAndUpdate(
+        {
+          repo: repo._id,
+          user: installation.user,
+          status: READ_ME_JOB_STATUS.PENDING,
+        },
+        {
+          repo: repo._id,
+          user: installation.user,
+          status: READ_ME_JOB_STATUS.PENDING,
+        },
+        { upsert: true }
+      );
+
+      return new Response("README job queued", {
+        status: 200,
+      });
+    }
+
     /* --------------------------------------------------
-       6️⃣ Ignore unrelated events
+       7️⃣ Ignore unrelated events
     -------------------------------------------------- */
     return new Response("Ignored", { status: 200 });
   } catch (error) {

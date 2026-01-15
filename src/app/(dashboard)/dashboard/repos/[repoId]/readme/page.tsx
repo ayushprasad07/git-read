@@ -38,10 +38,10 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { Progress } from "@/components/ui/progress";
-import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { motion, AnimatePresence } from "framer-motion";
+import { toast } from "sonner";
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 
@@ -77,6 +77,36 @@ export default function ReadmePage() {
   const [fetchingData, setFetchingData] = useState(true);
   const [showSidebar, setShowSidebar] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
+
+  // Load README from localStorage on initial load
+  useEffect(() => {
+    if (repoId) {
+      const savedReadme = localStorage.getItem(`readme_${repoId}`);
+      if (savedReadme) {
+        setReadme(savedReadme);
+        toast.info("Loaded previously generated README from local storage");
+      }
+    }
+  }, [repoId]);
+
+  // Save README to localStorage whenever it changes
+  useEffect(() => {
+    if (repoId && readme) {
+      localStorage.setItem(`readme_${repoId}`, readme);
+    }
+  }, [readme, repoId]);
+
+  // Clear localStorage when component unmounts or repo changes
+  useEffect(() => {
+    return () => {
+      // Optionally clear all readme storage
+      // Object.keys(localStorage).forEach(key => {
+      //   if (key.startsWith('readme_')) {
+      //     localStorage.removeItem(key);
+      //   }
+      // });
+    };
+  }, []);
 
   // Check if mobile
   useEffect(() => {
@@ -127,6 +157,7 @@ export default function ReadmePage() {
         }
       } catch (err: any) {
         console.error("Failed to fetch repo data", err);
+        toast.error("Failed to fetch repository data");
         // Set fallback data
         setRepoInfo({
           fullName: "user/repository",
@@ -148,6 +179,10 @@ export default function ReadmePage() {
     if (!repoId) return;
 
     setLoading(true);
+    const toastId = toast.loading("Generating README with AI...", {
+      description: "Analyzing your codebase and creating documentation"
+    });
+
     try {
       const res = await axios.post(
         `/api/github/repos/${repoId}/generate-readme`,
@@ -157,10 +192,23 @@ export default function ReadmePage() {
         }
       );
 
-      setReadme(res.data.readme || "");
-      setActiveTab('preview');
+      if (res.data.readme) {
+        setReadme(res.data.readme);
+        setActiveTab('preview');
+        
+        // Save to localStorage
+        localStorage.setItem(`readme_${repoId}`, res.data.readme);
+        
+        toast.success("README generated successfully!", {
+          id: toastId,
+          description: "Your README has been generated and saved locally"
+        });
+      } else {
+        throw new Error("No README content returned");
+      }
     } catch (err: any) {
       console.error(err);
+      
       // Fallback README template
       const fallbackReadme = `# ${repoInfo?.fullName?.split('/')[1] || 'Project'}
 
@@ -190,6 +238,12 @@ Pull requests are welcome.`;
 
       setReadme(fallbackReadme);
       setActiveTab('preview');
+      localStorage.setItem(`readme_${repoId}`, fallbackReadme);
+      
+      toast.error("Failed to generate README", {
+        id: toastId,
+        description: "Using fallback template. Please try again."
+      });
     } finally {
       setLoading(false);
     }
@@ -199,8 +253,12 @@ Pull requests are welcome.`;
     if (!readme.trim() || !repoId) return;
 
     setCommitting(true);
+    const toastId = toast.loading("Committing README to GitHub...", {
+      description: "Uploading your README to the repository"
+    });
+
     try {
-      await axios.post(
+      const res = await axios.post(
         `/api/github/repos/${repoId}/commit-readme`,
         {
           readmeContent: readme,
@@ -208,9 +266,31 @@ Pull requests are welcome.`;
         }
       );
 
-      // Show success notification (you can add toast here)
+      if (res.data.success) {
+        toast.success("README committed successfully!", {
+          id: toastId,
+          description: "Your README has been pushed to GitHub"
+        });
+        
+        // Clear localStorage after successful commit
+        localStorage.removeItem(`readme_${repoId}`);
+      } else {
+        throw new Error(res.data.message || "Commit failed");
+      }
     } catch (err: any) {
       console.error(err);
+      
+      let errorMessage = "Failed to commit README";
+      if (err.response?.data?.message) {
+        errorMessage = err.response.data.message;
+      } else if (err.message) {
+        errorMessage = err.message;
+      }
+      
+      toast.error("Commit failed", {
+        id: toastId,
+        description: errorMessage
+      });
     } finally {
       setCommitting(false);
     }
@@ -219,6 +299,9 @@ Pull requests are welcome.`;
   function handleCopyToClipboard() {
     navigator.clipboard.writeText(readme);
     setCopySuccess(true);
+    toast.success("Copied to clipboard", {
+      description: "README content copied to clipboard"
+    });
     setTimeout(() => setCopySuccess(false), 2000);
   }
 
@@ -232,9 +315,23 @@ Pull requests are welcome.`;
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
+    
+    toast.success("Download started", {
+      description: "README.md is being downloaded"
+    });
   }
 
-  // Icon components
+  function clearReadme() {
+    if (!readme.trim()) return;
+    
+    setReadme('');
+    localStorage.removeItem(`readme_${repoId}`);
+    toast.info("Editor cleared", {
+      description: "All content has been removed"
+    });
+  }
+
+  // Icon components (keep your existing icon components)
   const Hash = ({ className = "" }: { className?: string }) => (
     <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
       <line x1="4" x2="20" y1="9" y2="9" />
@@ -405,85 +502,6 @@ Pull requests are welcome.`;
               </Button>
             )}
           </div>
-        </div>
-
-        {/* Stats Overview - Stacked on mobile */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4 mb-4 sm:mb-6 lg:mb-8">
-          {fetchingData ? (
-            <>
-              <div className="h-28 sm:h-32 bg-white rounded-xl border border-gray-200 p-4 sm:p-6">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <div className="h-3 sm:h-4 w-12 sm:w-16 bg-gray-200 rounded animate-pulse mb-2" />
-                    <div className="h-6 sm:h-8 w-8 sm:w-12 bg-gray-300 rounded animate-pulse mt-2" />
-                  </div>
-                  <div className="h-8 sm:h-12 w-8 sm:w-12 bg-gray-200 rounded-lg animate-pulse" />
-                </div>
-              </div>
-              <div className="h-28 sm:h-32 bg-white rounded-xl border border-gray-200 p-4 sm:p-6">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <div className="h-3 sm:h-4 w-12 sm:w-16 bg-gray-200 rounded animate-pulse mb-2" />
-                    <div className="h-6 sm:h-8 w-8 sm:w-12 bg-gray-300 rounded animate-pulse mt-2" />
-                  </div>
-                  <div className="h-8 sm:h-12 w-8 sm:w-12 bg-gray-200 rounded-lg animate-pulse" />
-                </div>
-              </div>
-              <div className="h-28 sm:h-32 bg-white rounded-xl border border-gray-200 p-4 sm:p-6">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <div className="h-3 sm:h-4 w-16 sm:w-20 bg-gray-200 rounded animate-pulse mb-2" />
-                    <div className="h-6 sm:h-8 w-8 sm:w-12 bg-gray-300 rounded animate-pulse mt-2" />
-                  </div>
-                  <div className="h-8 sm:h-12 w-8 sm:w-12 bg-gray-200 rounded-lg animate-pulse" />
-                </div>
-              </div>
-            </>
-          ) : (
-            <>
-              <Card className="h-28 sm:h-32">
-                <CardContent className="pt-4 sm:pt-6">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-xs sm:text-sm font-medium text-gray-500">Words</p>
-                      <p className="text-xl sm:text-2xl md:text-3xl font-bold text-gray-900 mt-1 sm:mt-2">{stats.words}</p>
-                    </div>
-                    <div className="p-2 sm:p-3 bg-blue-50 rounded-lg">
-                      <FileText className="h-4 sm:h-6 w-4 sm:w-6 text-blue-600" />
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-
-              <Card className="h-28 sm:h-32">
-                <CardContent className="pt-4 sm:pt-6">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-xs sm:text-sm font-medium text-gray-500">Lines</p>
-                      <p className="text-xl sm:text-2xl md:text-3xl font-bold text-gray-900 mt-1 sm:mt-2">{stats.lines}</p>
-                    </div>
-                    <div className="p-2 sm:p-3 bg-green-50 rounded-lg">
-                      <FileCode className="h-4 sm:h-6 w-4 sm:w-6 text-green-600" />
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-
-              <Card className="h-28 sm:h-32">
-                <CardContent className="pt-4 sm:pt-6">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-xs sm:text-sm font-medium text-gray-500">Characters</p>
-                      <p className="text-xl sm:text-2xl md:text-3xl font-bold text-gray-900 mt-1 sm:mt-2">{stats.characters}</p>
-                    </div>
-                    <div className="p-2 sm:p-3 bg-purple-50 rounded-lg">
-                      <Code className="h-4 sm:h-6 w-4 sm:w-6 text-purple-600" />
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            </>
-          )}
         </div>
 
         {/* Main Editor Area - Stacked on mobile */}
@@ -702,6 +720,15 @@ Pull requests are welcome.`;
                           <FileCode className="h-3 sm:h-4 w-3 sm:w-4" />
                           <span className="whitespace-nowrap">{Object.keys(content).length} loaded</span>
                         </span>
+                        {readme && (
+                          <>
+                            <Separator orientation="vertical" className="h-3 sm:h-4 hidden sm:block" />
+                            <span className="flex items-center gap-1">
+                              <FileText className="h-3 sm:h-4 w-3 sm:w-4" />
+                              <span className="whitespace-nowrap">{stats.words} words</span>
+                            </span>
+                          </>
+                        )}
                       </div>
                     </div>
                     
@@ -709,7 +736,7 @@ Pull requests are welcome.`;
                       <Button
                         variant="outline"
                         size="sm"
-                        onClick={() => setReadme('')}
+                        onClick={clearReadme}
                         disabled={!readme.trim() || loading}
                         className="gap-1 sm:gap-2 h-7 sm:h-9 px-2 sm:px-3"
                       >
@@ -835,6 +862,27 @@ Pull requests are welcome.`;
                   </CardContent>
                 </Card>
               )}
+
+              {/* Local Storage Status */}
+              {readme && (
+                <Card>
+                  <CardHeader className="px-4 sm:px-6 py-3 sm:py-4">
+                    <CardTitle className="flex items-center gap-2 text-sm sm:text-base">
+                      <FileText className="h-4 sm:h-5 w-4 sm:w-5 text-green-600" />
+                      Auto-save Status
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="px-4 sm:px-6 py-3 space-y-3 sm:space-y-4">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs sm:text-sm text-gray-600">Local copy saved</span>
+                      <Badge variant="outline" className="text-xs">Auto-save</Badge>
+                    </div>
+                    <div className="text-xs sm:text-sm text-gray-500">
+                      Your README is automatically saved locally. Commit to GitHub to make it permanent.
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
             </div>
           )}
         </div>
@@ -856,6 +904,27 @@ Pull requests are welcome.`;
               <p className="text-xs text-gray-500 mt-1.5 text-center">
                 Processing {files.length} files...
               </p>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Mobile-only local storage status */}
+        {isMobile && readme && (
+          <Card className="mt-4 sm:mt-6">
+            <CardHeader className="px-4 py-3">
+              <CardTitle className="flex items-center gap-2 text-sm">
+                <FileText className="h-4 w-4 text-green-600" />
+                Auto-save Status
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="px-4 py-3 space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-gray-600">Local copy saved</span>
+                <Badge variant="outline" className="text-xs">Auto-save</Badge>
+              </div>
+              <div className="text-xs text-gray-500">
+                Your README is automatically saved locally. Commit to GitHub to make it permanent.
+              </div>
             </CardContent>
           </Card>
         )}
