@@ -169,21 +169,6 @@ export default function DashboardPage() {
               </p>
             </div>
           </div>
-          <div className="flex items-center gap-4">
-            <button
-              onClick={() => router.push('/dashboard/settings')}
-              className="px-4 py-2 text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 rounded-lg border border-gray-200 transition-colors"
-            >
-              Settings
-            </button>
-            <button
-              onClick={() => router.push('/api/auth/signout')}
-              className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 rounded-lg border border-gray-200 transition-colors"
-            >
-              <LogOut className="h-4 w-4" />
-              Logout
-            </button>
-          </div>
         </div>
       </header>
 

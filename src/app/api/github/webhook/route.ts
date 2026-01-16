@@ -1,92 +1,3 @@
-// //app/api/github/webhook/route.ts
-
-// import crypto from "crypto";
-// import { headers } from "next/headers";
-// import User from "@/model/User";
-// import GithubInstallation from "@/model/GithubInstallation";
-// import GithubRepo from "@/model/GithubRepo";
-// import { dbConnect } from "@/lib/dbConnect";
-
-// export async function POST(req: Request) {
-//   const body = await req.text();
-//   const signature = (await headers()).get("x-hub-signature-256");
-
-//   const expectedSignature =
-//     "sha256=" +
-//     crypto
-//       .createHmac("sha256", process.env.GITHUB_WEBHOOK_SECRET!)
-//       .update(body)
-//       .digest("hex");
-
-//   if (signature !== expectedSignature) {
-//     return new Response("Invalid signature", { status: 401 });
-//   }
-
-//   try {
-//     const payload = JSON.parse(body);
-//     console.log(payload);
-  
-//     if (payload.action !== "created" || !payload.installation) {
-//       return new Response("Ignored", { status: 200 });
-//     }
-  
-//     await dbConnect();
-  
-//     const installation = payload.installation;
-//     const repos = payload.repositories || [];
-  
-//     const githubLogin = installation.account.login;
-  
-//     const user = await User.findOne({
-//       githubUsername: githubLogin,
-//     });
-  
-//     if (!user) {
-//       console.error("No user found for GitHub login:", githubLogin);
-//       return new Response("User not found", { status: 404 });
-//     }
-  
-//     const savedInstallation = await GithubInstallation.findOneAndUpdate(
-//       { installationId: installation.id },
-//       {
-//         installationId: installation.id,
-//         githubAccountId: installation.account.id,
-//         githubAccountLogin: installation.account.login,
-//         githubAccountType: installation.account.type,
-//         user: user._id,
-//       },
-//       { upsert: true, new: true }
-//     );
-  
-//     for (const repo of repos) {
-//       await GithubRepo.findOneAndUpdate(
-//         { githubRepoId: repo.id },
-//         {
-//           githubRepoId: repo.id,
-//           name: repo.name,
-//           fullName: repo.full_name,
-//           private: repo.private,
-//           defaultBranch: repo.default_branch,
-//           installation: savedInstallation._id,
-//         },
-//         { upsert: true }
-//       );
-//     }
-  
-//     console.log("GitHub App installation saved:", installation.id);
-  
-//     return new Response("OK", { status: 200 });
-//   } catch (error) {
-//     console.log("Error Occure : ",error)
-//     return Response.json({
-//         success : false,
-//         message : "Server Error"
-//     },{
-//         status : 500
-//     })
-//   }
-// }
-
 import crypto from "crypto";
 import { headers } from "next/headers";
 
@@ -95,25 +6,25 @@ import { dbConnect } from "@/lib/dbConnect";
 import User from "@/model/User";
 import GithubInstallation from "@/model/GithubInstallation";
 import GithubRepo from "@/model/GithubRepo";
-import ReadmeJob, {
-  READ_ME_JOB_STATUS,
-} from "@/model/ReadmeJob";
+import ReadmeJob, { READ_ME_JOB_STATUS } from "@/model/ReadmeJob";
 
 /**
  * GitHub App Webhook Handler
+ *
  * Handles:
  * - installation.created
+ * - installation.deleted  ✅ (FULL CLEANUP)
  * - installation_repositories.added
  * - installation_repositories.removed
  * - push (auto-sync README)
  */
 export async function POST(req: Request) {
-  /* --------------------------------------------------
-     1️⃣ Verify webhook signature
-  -------------------------------------------------- */
+
   const body = await req.text();
-  const signature = (await headers()).get("x-hub-signature-256");
-  const event = (await headers()).get("x-github-event");
+  const headersList = await headers();
+
+  const signature = headersList.get("x-hub-signature-256");
+  const event = headersList.get("x-github-event");
 
   const expectedSignature =
     "sha256=" +
@@ -127,19 +38,13 @@ export async function POST(req: Request) {
   }
 
   try {
-    /* --------------------------------------------------
-       2️⃣ Parse payload & connect DB
-    -------------------------------------------------- */
     const payload = JSON.parse(body);
     await dbConnect();
 
-    /* ==================================================
-       3️⃣ INSTALLATION CREATED
-    ================================================== */
     if (event === "installation" && payload.action === "created") {
       const installation = payload.installation;
 
-      // 🔑 Match user via GitHub USER ID (NOT username)
+      // Match user using GitHub USER ID
       const user = await User.findOne({
         githubUserId: installation.account.id.toString(),
       });
@@ -186,9 +91,49 @@ export async function POST(req: Request) {
       return new Response("Installation created", { status: 200 });
     }
 
-    /* ==================================================
-       4️⃣ REPOSITORIES ADDED
-    ================================================== */
+    if (event === "installation" && payload.action === "deleted") {
+      const installationId = payload.installation.id.toString();
+
+      const installation = await GithubInstallation.findOne({
+        installationId,
+      });
+
+      if (!installation) {
+        return new Response("Installation already removed", {
+          status: 200,
+        });
+      }
+
+      // 1️ Fetch repos linked to this installation
+      const repos = await GithubRepo.find({
+        installation: installation._id,
+      }).select("_id");
+
+      const repoIds = repos.map((r) => r._id);
+
+      // 2️ Delete README jobs
+      await ReadmeJob.deleteMany({
+        repo: { $in: repoIds },
+      });
+
+      // 3️ Delete repos
+      await GithubRepo.deleteMany({
+        installation: installation._id,
+      });
+
+      // 4️ Delete installation
+      await GithubInstallation.deleteOne({
+        _id: installation._id,
+      });
+
+      console.log(
+        `🗑️ GitHub App uninstalled → cleaned installation ${installationId}`
+      );
+
+      return new Response("Installation deleted", { status: 200 });
+    }
+
+
     if (
       event === "installation_repositories" &&
       payload.action === "added"
@@ -222,9 +167,7 @@ export async function POST(req: Request) {
       return new Response("Repositories added", { status: 200 });
     }
 
-    /* ==================================================
-       5️⃣ REPOSITORIES REMOVED
-    ================================================== */
+    
     if (
       event === "installation_repositories" &&
       payload.action === "removed"
@@ -238,9 +181,7 @@ export async function POST(req: Request) {
       return new Response("Repositories removed", { status: 200 });
     }
 
-    /* ==================================================
-       6️⃣ PUSH EVENT → QUEUE README JOB
-    ================================================== */
+  
     if (event === "push" && payload.repository) {
       const fullName = payload.repository.full_name;
 
@@ -280,14 +221,9 @@ export async function POST(req: Request) {
         { upsert: true }
       );
 
-      return new Response("README job queued", {
-        status: 200,
-      });
+      return new Response("README job queued", { status: 200 });
     }
 
-    /* --------------------------------------------------
-       7️⃣ Ignore unrelated events
-    -------------------------------------------------- */
     return new Response("Ignored", { status: 200 });
   } catch (error) {
     console.error("Webhook error:", error);
