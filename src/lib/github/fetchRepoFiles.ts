@@ -3,7 +3,7 @@ import { getInstallationAccessToken } from "@/lib/githubApp";
 
 export async function fetchRepoFiles(repo: any, installation: any) {
   const token = await getInstallationAccessToken(
-    Number(installation.installationId)
+    installation.installationId
   );
 
   const octokit = new Octokit({ auth: token });

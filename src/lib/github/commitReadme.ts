@@ -13,7 +13,7 @@ export async function commitReadme({
   message: string;
 }) {
   const token = await getInstallationAccessToken(
-    Number(installation.installationId)
+    installation.installationId
   );
 
   const octokit = new Octokit({ auth: token });

@@ -15,7 +15,7 @@ export async function fetchImportantFiles(
   installation: any
 ): Promise<Record<string, string>> {
   const token = await getInstallationAccessToken(
-    Number(installation.installationId)
+    installation.installationId
   );
 
   const octokit = new Octokit({ auth: token });
