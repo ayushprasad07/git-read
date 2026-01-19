@@ -1,171 +1,3 @@
-// import { authOptions } from "@/app/api/auth/[...nextauth]/options";
-// import { dbConnect } from "@/lib/dbConnect";
-// import { getInstallationAccessToken } from "@/lib/githubApp";
-// import { repoRateLimiter } from "@/lib/reatLimit";
-// import GithubRepo from "@/model/GithubRepo";
-// import { Octokit } from "@octokit/rest";
-// import mongoose from "mongoose";
-// import { getServerSession } from "next-auth";
-
-// const IMPORTANT_FILES = [
-//   "README.md",
-//   "package.json",
-//   "pyproject.toml",
-//   "requirements.txt",
-//   "pom.xml",
-//   "build.gradle",
-//   "src/index.js",
-//   "src/index.ts",
-//   "src/app.js",
-//   "src/app.ts",
-//   "app.py",
-//   "main.py",
-// ];
-
-// export async function GET(req : Request,{params} : {params : Promise<{repoId : string}>}){
-
-//     const session = await getServerSession(authOptions);
-
-//     if(!session){
-//         return Response.json({
-//             success : false,
-//             message: "Unauthorized"
-//         },{
-//             status : 401
-//         })
-//     }
-
-//     const { repoId } = await params;
-
-//     if(!mongoose.Types.ObjectId.isValid(repoId)){
-//         return Response.json({
-//             success : false,
-//             message: "Bad Request"
-//         },{
-//             status : 400
-//         })
-//     }
-
-//     const repoid = new mongoose.Types.ObjectId(repoId);
-
-//     const ip =
-//         req.headers.get("x-forwarded-for") ??
-//         req.headers.get("x-real-ip") ??
-//         "unknown";
-
-//     const rateLimitKey = `repo:${repoId}:user:${session.user?.email}:ip:${ip}`;
-
-//     const { success, remaining, reset } =
-//         await repoRateLimiter.limit(rateLimitKey);
-
-//     if (!success) {
-//         return new Response(
-//         JSON.stringify({
-//             success: false,
-//             message: "Too many requests. Please slow down.",
-//         }),
-//         {
-//             status: 429,
-//             headers: {
-//             "X-RateLimit-Remaining": remaining.toString(),
-//             "X-RateLimit-Reset": reset.toString(),
-//             },
-//         }
-//         );
-//     }
-
-
-//     try {
-//         await dbConnect();
-
-
-//         const repo = await GithubRepo.findById(repoid).populate("installation");
-
-//         if(!repo || !repo.installation){
-//             return Response.json({
-//                 success : false,
-//                 message: "Repo not found"
-//             },{
-//                 status : 404
-//             })
-//         }
-
-//         const installation = repo.installation?.installationId;
-
-//         if(!installation){
-//             return Response.json({
-//                 success : false,
-//                 message: "Repo not found"
-//             },{
-//                 status : 404
-//             })
-//         }
-
-//         const token = await getInstallationAccessToken(installation);
-
-//         if(!token){
-//             return Response.json({
-//                 success : false,
-//                 message: "Unnauthenticated request"
-//             },{
-//                 status : 404
-//             })
-//         }
-
-//         const octokit = new Octokit({
-//             auth : token
-//         });
-
-//         const extractedFile : Record<string,string> = {};
-
-//         for (const file of IMPORTANT_FILES) {
-//             try {
-//                 const {data} = await octokit.request(
-//                     "GET /repos/{owner}/{repo}/contents/{path}",
-//                     {
-//                         owner : repo.fullName.split("/")[0],
-//                         repo : repo.fullName.split("/")[1],
-//                         path : file,
-//                     }
-//                 );
-//                 //@ts-ignore
-//                 if(data?.content){
-//                     //@ts-ignore
-//                     const decode = Buffer.from(data.content, 'base64').toString('utf-8');
-//                     extractedFile[file] = decode;
-//                 }
-//             } catch (error) {
-//                 // console.log("Error in getting file:", error);
-//                 // return Response.json({
-//                 //     success : false,
-//                 //     message: "Fetching error"
-//                 // },{
-//                 //     status : 400
-//                 // })
-//                 continue;
-//             }
-//         }
-
-//         console.log("This is teh private key : ", process.env.GITHUB_APP_PRIVATE_KEY)
-
-//         return Response.json({
-//             success : true,
-//             repoName : repo.fullName,
-//             content : extractedFile
-//         },{
-//             status : 200
-//         })
-//     } catch (error) {
-//         console.log("Internal Server error  :", error);
-//         return Response.json({
-//             success : false,
-//             message: "Internal Server error"
-//         },{
-//             status : 500
-//         })
-//     }
-// }
-
 import { authOptions } from "@/app/api/auth/[...nextauth]/options";
 import { dbConnect } from "@/lib/dbConnect";
 import { getInstallationAccessToken } from "@/lib/githubApp";
@@ -190,77 +22,245 @@ const IMPORTANT_FILES = [
   "main.py",
 ];
 
-export async function GET(
-  req: Request,
-  { params }: { params: Promise<{ repoId: string }> }
-) {
-  const session = await getServerSession(authOptions);
-  if (!session) {
-    return Response.json({ success: false, message: "Unauthorized" }, { status: 401 });
-  }
+export async function GET(req : Request,{params} : {params : Promise<{repoId : string}>}){
 
-  const { repoId } = await params;
-  if (!mongoose.Types.ObjectId.isValid(repoId)) {
-    return Response.json({ success: false, message: "Bad Request" }, { status: 400 });
-  }
+    const session = await getServerSession(authOptions);
 
-  const ip =
-    req.headers.get("x-forwarded-for") ??
-    req.headers.get("x-real-ip") ??
-    "unknown";
-
-  const rateLimitKey = `repo:${repoId}:user:${session.user?.email}:ip:${ip}`;
-  const { success } = await repoRateLimiter.limit(rateLimitKey);
-  if (!success) {
-    return Response.json({ success: false, message: "Too many requests" }, { status: 429 });
-  }
-
-  try {
-    await dbConnect();
-
-    const repo = await GithubRepo.findById(repoId).populate("installation");
-    if (!repo || !repo.installation) {
-      return Response.json({ success: false, message: "Repo not found" }, { status: 404 });
+    if(!session){
+        return Response.json({
+            success : false,
+            message: "Unauthorized"
+        },{
+            status : 401
+        })
     }
 
-    const token = await getInstallationAccessToken(repo.installation.installationId);
-    const octokit = new Octokit({ auth: token });
+    const { repoId } = await params;
 
-    const [owner, name] = repo.fullName.split("/");
-    const extractedFile: Record<string, string> = {};
+    if(!mongoose.Types.ObjectId.isValid(repoId)){
+        return Response.json({
+            success : false,
+            message: "Bad Request"
+        },{
+            status : 400
+        })
+    }
 
-    for (const file of IMPORTANT_FILES) {
-      try {
-        const { data } = await octokit.request(
-          "GET /repos/{owner}/{repo}/contents/{path}",
-          { owner, repo: name, path: file }
-        );
+    const repoid = new mongoose.Types.ObjectId(repoId);
 
-        if ("content" in data && data.content) {
-          extractedFile[file] = Buffer.from(
-            data.content,
-            "base64"
-          ).toString("utf-8");
+    const ip =
+        req.headers.get("x-forwarded-for") ??
+        req.headers.get("x-real-ip") ??
+        "unknown";
+
+    const rateLimitKey = `repo:${repoId}:user:${session.user?.email}:ip:${ip}`;
+
+    const { success, remaining, reset } =
+        await repoRateLimiter.limit(rateLimitKey);
+
+    if (!success) {
+        return new Response(
+        JSON.stringify({
+            success: false,
+            message: "Too many requests. Please slow down.",
+        }),
+        {
+            status: 429,
+            headers: {
+            "X-RateLimit-Remaining": remaining.toString(),
+            "X-RateLimit-Reset": reset.toString(),
+            },
         }
-      } catch {
-        // File not present → ignore
-        continue;
-      }
+        );
     }
 
-    return Response.json(
-      {
-        success: true,
-        repoName: repo.fullName,
-        content: extractedFile,
-      },
-      { status: 200 }
-    );
-  } catch (error) {
-    console.error("CONTENT ROUTE ERROR:", error);
-    return Response.json(
-      { success: false, message: "Internal Server error" },
-      { status: 500 }
-    );
-  }
+
+    try {
+        await dbConnect();
+
+
+        const repo = await GithubRepo.findById(repoid).populate("installation");
+
+        if(!repo || !repo.installation){
+            return Response.json({
+                success : false,
+                message: "Repo not found"
+            },{
+                status : 404
+            })
+        }
+
+        const installation = repo.installation?.installationId;
+
+        if(!installation){
+            return Response.json({
+                success : false,
+                message: "Repo not found"
+            },{
+                status : 404
+            })
+        }
+
+        const token = await getInstallationAccessToken(installation);
+
+        if(!token){
+            return Response.json({
+                success : false,
+                message: "Unnauthenticated request"
+            },{
+                status : 404
+            })
+        }
+
+        const octokit = new Octokit({
+            auth : token
+        });
+
+        const extractedFile : Record<string,string> = {};
+
+        for (const file of IMPORTANT_FILES) {
+            try {
+                const {data} = await octokit.request(
+                    "GET /repos/{owner}/{repo}/contents/{path}",
+                    {
+                        owner : repo.fullName.split("/")[0],
+                        repo : repo.fullName.split("/")[1],
+                        path : file,
+                    }
+                );
+                //@ts-ignore
+                if(data?.content){
+                    //@ts-ignore
+                    const decode = Buffer.from(data.content, 'base64').toString('utf-8');
+                    extractedFile[file] = decode;
+                }
+            } catch (error) {
+                // console.log("Error in getting file:", error);
+                // return Response.json({
+                //     success : false,
+                //     message: "Fetching error"
+                // },{
+                //     status : 400
+                // })
+                continue;
+            }
+        }
+
+        console.log("This is teh private key : ", process.env.GITHUB_APP_PRIVATE_KEY)
+
+        return Response.json({
+            success : true,
+            repoName : repo.fullName,
+            content : extractedFile
+        },{
+            status : 200
+        })
+    } catch (error) {
+        console.log("Internal Server error  :", error);
+        return Response.json({
+            success : false,
+            message: "Internal Server error"
+        },{
+            status : 500
+        })
+    }
 }
+
+// import { authOptions } from "@/app/api/auth/[...nextauth]/options";
+// import { dbConnect } from "@/lib/dbConnect";
+// import { getInstallationAccessToken } from "@/lib/githubApp";
+// import { repoRateLimiter } from "@/lib/reatLimit";
+// import GithubRepo from "@/model/GithubRepo";
+// import { Octokit } from "@octokit/rest";
+// import mongoose from "mongoose";
+// import { getServerSession } from "next-auth";
+
+// const IMPORTANT_FILES = [
+//   "README.md",
+//   "package.json",
+//   "pyproject.toml",
+//   "requirements.txt",
+//   "pom.xml",
+//   "build.gradle",
+//   "src/index.js",
+//   "src/index.ts",
+//   "src/app.js",
+//   "src/app.ts",
+//   "app.py",
+//   "main.py",
+// ];
+
+// export async function GET(
+//   req: Request,
+//   { params }: { params: Promise<{ repoId: string }> }
+// ) {
+//   const session = await getServerSession(authOptions);
+//   if (!session) {
+//     return Response.json({ success: false, message: "Unauthorized" }, { status: 401 });
+//   }
+
+//   const { repoId } = await params;
+//   if (!mongoose.Types.ObjectId.isValid(repoId)) {
+//     return Response.json({ success: false, message: "Bad Request" }, { status: 400 });
+//   }
+
+//   const ip =
+//     req.headers.get("x-forwarded-for") ??
+//     req.headers.get("x-real-ip") ??
+//     "unknown";
+
+//   const rateLimitKey = `repo:${repoId}:user:${session.user?.email}:ip:${ip}`;
+//   const { success } = await repoRateLimiter.limit(rateLimitKey);
+//   if (!success) {
+//     return Response.json({ success: false, message: "Too many requests" }, { status: 429 });
+//   }
+
+//   try {
+//     await dbConnect();
+
+//     const repo = await GithubRepo.findById(repoId).populate("installation");
+//     if (!repo || !repo.installation) {
+//       return Response.json({ success: false, message: "Repo not found" }, { status: 404 });
+//     }
+
+//     const token = await getInstallationAccessToken(repo.installation.installationId);
+//     const octokit = new Octokit({ auth: token });
+
+//     const [owner, name] = repo.fullName.split("/");
+//     const extractedFile: Record<string, string> = {};
+
+//     for (const file of IMPORTANT_FILES) {
+//       try {
+//         const { data } = await octokit.request(
+//           "GET /repos/{owner}/{repo}/contents/{path}",
+//           { owner, repo: name, path: file }
+//         );
+
+//         if ("content" in data && data.content) {
+//           extractedFile[file] = Buffer.from(
+//             data.content,
+//             "base64"
+//           ).toString("utf-8");
+//         }
+//       } catch {
+//         // File not present → ignore
+//         continue;
+//       }
+//     }
+
+//     return Response.json(
+//       {
+//         success: true,
+//         repoName: repo.fullName,
+//         content: extractedFile,
+//       },
+//       { status: 200 }
+//     );
+//   } catch (error) {
+//     console.error("CONTENT ROUTE ERROR:", error);
+//     return Response.json(
+//       { success: false, message: "Internal Server error" },
+//       { status: 500 }
+//     );
+//   }
+// }

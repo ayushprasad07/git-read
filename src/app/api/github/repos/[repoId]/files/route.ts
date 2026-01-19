@@ -170,84 +170,110 @@ export async function GET(
   req: Request,
   { params }: { params: Promise<{ repoId: string }> }
 ) {
+  /* --------------------------------------------------
+     1️⃣ AUTH
+  -------------------------------------------------- */
   const session = await getServerSession(authOptions);
   if (!session) {
-    return Response.json({ success: false, message: "Unauthorized" }, { status: 401 });
+    return Response.json(
+      { success: false, message: "Unauthorized" },
+      { status: 401 }
+    );
   }
 
   const { repoId } = await params;
   if (!mongoose.Types.ObjectId.isValid(repoId)) {
-    return Response.json({ success: false, message: "Bad Request" }, { status: 400 });
+    return Response.json(
+      { success: false, message: "Bad Request" },
+      { status: 400 }
+    );
   }
 
+  /* --------------------------------------------------
+     2️⃣ RATE LIMIT
+  -------------------------------------------------- */
   const ip =
     req.headers.get("x-forwarded-for") ??
     req.headers.get("x-real-ip") ??
     "unknown";
 
   const rateLimitKey = `repo:${repoId}:user:${session.user?.email}:ip:${ip}`;
-  const { success } = await repoRateLimiter.limit(rateLimitKey);
+  const { success, remaining, reset } =
+    await repoRateLimiter.limit(rateLimitKey);
+
   if (!success) {
-    return Response.json({ success: false, message: "Too many requests" }, { status: 429 });
+    return new Response(
+      JSON.stringify({
+        success: false,
+        message: "Too many requests. Please slow down.",
+      }),
+      {
+        status: 429,
+        headers: {
+          "X-RateLimit-Remaining": remaining.toString(),
+          "X-RateLimit-Reset": reset.toString(),
+        },
+      }
+    );
   }
 
   try {
+    /* --------------------------------------------------
+       3️⃣ DB FETCH
+    -------------------------------------------------- */
     await dbConnect();
 
     const repo = await GithubRepo.findById(repoId).populate("installation");
     if (!repo || !repo.installation) {
-      return Response.json({ success: false, message: "Repo not found" }, { status: 404 });
+      return Response.json(
+        { success: false, message: "Repo not found" },
+        { status: 404 }
+      );
     }
 
-    const token = await getInstallationAccessToken(repo.installation.installationId);
+    /* --------------------------------------------------
+       4️⃣ GITHUB AUTH
+    -------------------------------------------------- */
+    const token = await getInstallationAccessToken(
+      repo.installation.installationId
+    );
+
     const octokit = new Octokit({ auth: token });
 
     const [owner, name] = repo.fullName.split("/");
 
-    // 1️⃣ Get repo info
-    const { data: repoData } = await octokit.request(
-      "GET /repos/{owner}/{repo}",
-      { owner, repo: name }
-    );
-
-    // 2️⃣ Get branch info
-    const { data: branch } = await octokit.request(
-      "GET /repos/{owner}/{repo}/branches/{branch}",
+    /* --------------------------------------------------
+       5️⃣ FETCH FILES (FIXED)
+    -------------------------------------------------- */
+    const { data } = await octokit.request(
+      "GET /repos/{owner}/{repo}/contents/{path}",
       {
         owner,
         repo: name,
-        branch: repoData.default_branch,
+        path: "",
       }
     );
 
-    // 3️⃣ Extract TREE SHA
-    const treeSha = branch.commit.commit.tree.sha;
+    const files = Array.isArray(data)
+      ? data.map((item) => ({
+          path: item.path,
+          type: item.type, // "file" | "dir"
+        }))
+      : [];
 
-    // 4️⃣ Fetch FULL tree
-    const { data: tree } = await octokit.request(
-      "GET /repos/{owner}/{repo}/git/trees/{tree_sha}",
-      {
-        owner,
-        repo: name,
-        tree_sha: treeSha,
-        recursive: "true",
-      }
-    );
-
+    /* --------------------------------------------------
+       6️⃣ RESPONSE
+    -------------------------------------------------- */
     return Response.json(
       {
+        success: true,
         repository: {
-          name: repoData.name,
-          fullName: repoData.full_name,
-          defaultBranch: repoData.default_branch,
-          private: repoData.private,
+          name: repo.name,
+          fullName: repo.fullName,
+          defaultBranch: repo.defaultBranch,
+          private: repo.private,
         },
-        files: tree.tree
-          .filter((item) => item.type === "blob")
-          .map((item) => ({
-            path: item.path,
-            type: item.type,
-          })),
+        files,
       },
       { status: 200 }
     );
