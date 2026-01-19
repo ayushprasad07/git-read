@@ -5,6 +5,8 @@ export function getJwt(){
     const privateKey = process.env.GITHUB_APP_PRIVATE_KEY!;
     const appId = process.env.GITHUB_APP_ID!;
 
+    console.log(privateKey, appId);
+
     if(!privateKey || !appId){
         return Response.json({
             success : false,
