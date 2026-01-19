@@ -50,19 +50,13 @@
 import jwt from "jsonwebtoken";
 import { Octokit } from "@octokit/rest";
 
-export function getJwt(): string {
-  const rawKey = process.env.GITHUB_APP_PRIVATE_KEY;
+export function getJwt() {
   const appId = process.env.GITHUB_APP_ID;
+  const privateKey = process.env.GITHUB_APP_PRIVATE_KEY
+    ?.replace(/\\n/g, "\n");
 
-  if (!rawKey || !appId) {
-    throw new Error("GitHub App env vars missing");
-  }
-
-  // 🔴 THIS FIXES PRODUCTION
-  const privateKey = rawKey.replace(/\\n/g, "\n");
-
-  if (!privateKey.includes("BEGIN RSA PRIVATE KEY")) {
-    throw new Error("Invalid GitHub App private key");
+  if (!appId || !privateKey) {
+    throw new Error("GitHub App credentials missing");
   }
 
   const now = Math.floor(Date.now() / 1000);
@@ -79,18 +73,18 @@ export function getJwt(): string {
 }
 
 export async function getInstallationAccessToken(
-  installationId: number
-): Promise<string> {
-  const appJwt = getJwt();
+  installationId: string
+) {
+  const jwtToken = getJwt();
 
   const octokit = new Octokit({
-    auth: appJwt,
+    auth: jwtToken,
   });
 
   const response = await octokit.request(
     "POST /app/installations/{installation_id}/access_tokens",
     {
-      installation_id: installationId,
+      installation_id: Number(installationId),
     }
   );
 
