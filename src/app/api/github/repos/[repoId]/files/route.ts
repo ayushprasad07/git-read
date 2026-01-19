@@ -129,8 +129,8 @@ export async function GET(req : Request,{params} : {params : Promise<{repoId : s
             }
         );
 
-        console.log(treeData);
-
+        // console.log(treeData);
+        console.log("This is teh private key : ", process.env.GITHUB_APP_PRIVATE_KEY)
         return Response.json({
             repository: {
                 name: repoData.name,
