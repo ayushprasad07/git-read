@@ -122,7 +122,7 @@ export async function POST(req : Request,
             //@ts-ignore
             sha = data.sha;
         } catch (error) {
-            console.log("fetching error : ",error);
+            // console.log("fetching error : ",error);
         }
 
         const {data} = await octokit.request(
@@ -145,7 +145,7 @@ export async function POST(req : Request,
         })
 
     } catch (error) {
-        console.log("Error internal", error);
+        // console.log("Error internal", error);
         return Response.json({
             success : false,
             message: "Internal Server Error"

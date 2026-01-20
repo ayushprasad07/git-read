@@ -57,7 +57,7 @@ export default function DashboardPage() {
         const res = await fetch("/api/github/repos");
         if (res.ok) {
           const data = await res.json();
-          console.log("Repo data: ", data);
+          // console.log("Repo data: ", data);
           setRepos(data.repos || []);
         } else {
           toast.error("Failed to fetch repositories");

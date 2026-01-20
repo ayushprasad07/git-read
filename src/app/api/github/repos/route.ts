@@ -83,7 +83,7 @@ export async function GET() {
         });
         
     } catch (error) {
-        console.log("Failed to fetch repos", error);
+        // console.log("Failed to fetch repos", error);
         return Response.json({
             success : false,
             message: "Internal Server error",

@@ -126,9 +126,9 @@ export async function POST(req: Request) {
         _id: installation._id,
       });
 
-      console.log(
-        `🗑️ GitHub App uninstalled → cleaned installation ${installationId}`
-      );
+      // console.log(
+      //   `🗑️ GitHub App uninstalled → cleaned installation ${installationId}`
+      // );
 
       return new Response("Installation deleted", { status: 200 });
     }

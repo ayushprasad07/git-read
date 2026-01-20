@@ -115,7 +115,7 @@ export async function PATCH(req : Request,
             status : 200
         })
     } catch (error) {
-        console.log(error);
+        // console.log(error);
         return Response.json({
             success : false,
             message: "Internal Server Error"
